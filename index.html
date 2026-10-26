@@ -1,0 +1,1052 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Analyseur de Phrases - Code de Correction</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- ⚠️ RÈGLE BABEL OBLIGATOIRE -->
+    <script>
+      Babel.registerPreset('react-classic', {
+        presets: [
+          [Babel.availablePresets['react'], { runtime: 'classic' }]
+        ]
+      });
+    </script>
+
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background-color: #f8fafc;
+        }
+
+        #root {
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .fade-in { animation: fadeIn 0.4s ease-out forwards; }
+        .slide-up { animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .bounce-slight { animation: bounceSlight 2s infinite; }
+        .pulse-attention { animation: pulseAttention 2s infinite; }
+        
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes bounceSlight { 
+            0%, 100% { transform: translateY(0); } 
+            50% { transform: translateY(-5px); } 
+        }
+        @keyframes pulseAttention {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7); }
+            50% { box-shadow: 0 0 0 8px rgba(245, 158, 11, 0); }
+        }
+
+        .target-part {
+            display: inline-block;
+            transition: all 0.3s ease;
+            position: relative;
+            z-index: 10;
+        }
+
+        .hitbox-interactive {
+            cursor: pointer;
+            border-radius: 6px;
+            padding: 2px 6px;
+            margin: -2px -6px;
+            border: 2px dashed #fcd34d;
+            background-color: #fef3c7;
+        }
+        .hitbox-interactive:hover {
+            background-color: #fde68a;
+            transform: scale(1.1);
+        }
+
+        .selected-step1 { 
+            color: #059669; /* Emerald 600 */
+            font-weight: 900;
+            text-shadow: 0px 2px 4px rgba(16, 185, 129, 0.2);
+        }
+
+        .verb-underlined {
+            border-bottom: 4px solid #ef4444;
+            color: #991b1b;
+            font-weight: 800;
+            padding-bottom: 2px;
+        }
+
+        .gns-highlight {
+            color: #dc2626;
+            font-weight: 800;
+            background-color: #fee2e2;
+            padding: 2px 6px;
+            border-radius: 6px;
+        }
+
+        .star-doubt {
+            position: absolute;
+            top: -28px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #eab308;
+            font-size: 1.75rem;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            z-index: 30;
+        }
+
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        .gn-container {
+            position: relative;
+            display: inline-flex;
+            flex-wrap: wrap;
+            align-items: baseline;
+        }
+        .svg-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 15;
+            overflow: visible;
+        }
+        .path-draw {
+            stroke-dasharray: 1000;
+            stroke-dashoffset: 1000;
+            animation: drawPath 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        @keyframes drawPath { to { stroke-dashoffset: 0; } }
+
+        .error-text {
+            color: #dc2626;
+            text-decoration: line-through;
+            background-color: #fee2e2;
+            padding: 0 4px;
+            border-radius: 4px;
+            opacity: 0.6;
+        }
+        .corrected-text {
+            color: #059669;
+            font-weight: 800;
+            background-color: #d1fae5;
+            padding: 0 4px;
+            border-radius: 4px;
+            animation: fadeIn 0.5s ease-out;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module" data-presets="react-classic">
+        const { useState, useEffect, useRef, useLayoutEffect } = React;
+
+        // Composant d'icône sécurisé sans dépendance externe conflictuelle
+        const Icon = ({ name, className = "w-6 h-6" }) => {
+            const getIconSvg = (iconName) => {
+                switch(iconName) {
+                    case 'pen-tool': return '<path d="M12 19l7-7 3 3-7 7-3-3z"></path><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path><path d="M2 2l7.586 7.586"></path><circle cx="11" cy="11" r="2"></circle>';
+                    case 'arrow-right': return '<path d="M5 12h14"></path><path d="M12 5l7 7-7 7"></path>';
+                    case 'arrow-left': return '<path d="M19 12H5"></path><path d="M12 19l-7-7 7-7"></path>';
+                    case 'sparkles': return '<path d="M12 3v18"></path><path d="M3 12h18"></path><path d="M5.636 5.636l12.728 12.728"></path><path d="M18.364 5.636L5.636 18.364"></path>';
+                    case 'check-circle': return '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><path d="M22 4L12 14.01l-3-3"></path>';
+                    case 'book-open': return '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path>';
+                    case 'lightbulb': return '<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.9 1.2 1.5 1.5 2.5"></path><path d="M9 18h6"></path><path d="M10 22h4"></path>';
+                    default: return '<circle cx="12" cy="12" r="10"></circle>';
+                }
+            };
+            return (
+                <svg 
+                    xmlns="http://www.w3.org/2000/svg" 
+                    width="24" height="24" viewBox="0 0 24 24" 
+                    fill="none" stroke="currentColor" strokeWidth="2" 
+                    strokeLinecap="round" strokeLinejoin="round" 
+                    className={className}
+                    dangerouslySetInnerHTML={{ __html: getIconSvg(name) }}
+                />
+            );
+        };
+
+        // EXEMPLES DE PHRASES PRÉ-CHARGÉES
+        const PRESET_SENTENCES = [
+            {
+                title: "Phrase 1 (Les accords de base)",
+                studentText: "les petit garcons mange des pomme rouge",
+                words: [
+                    { id: 0, text: "les", original: "les", fixed: "Les", role: "det", gn: 1, cap: "l", isCapError: true },
+                    { id: 1, text: "petit", original: "petit", fixed: "petits", role: "adj", gn: 1, hasError: true, errorType: "accord", correctionExplanation: "On accorde l'adjectif 'petits' avec le nom masculin pluriel 'garçons'." },
+                    { id: 2, text: "garcons", original: "garcons", fixed: "garçons", role: "noun", gn: 1, isNounNoyau: true, hasError: true, errorType: "orthographe", correctionExplanation: "On ajoute la cédille pour faire le son [s] et non [k]." },
+                    { id: 3, text: "mange", original: "mange", fixed: "mangent", role: "verb", gn: null, hasError: true, errorType: "accord", correctionExplanation: "Le verbe s'accorde avec 'Les petits garçons' (ils)." },
+                    { id: 4, text: "des", original: "des", fixed: "des", role: "det", gn: 2 },
+                    { id: 5, text: "pomme", original: "pomme", fixed: "pommes", role: "noun", gn: 2, isNounNoyau: true, hasError: true, errorType: "accord", correctionExplanation: "Il y a plusieurs pommes (des), on ajoute un 's'." },
+                    { id: 6, text: "rouge", original: "rouge", fixed: "rouges", role: "adj", gn: 2, hasError: true, errorType: "accord", puncSymbol: ".", isPuncError: true, isLast: true, correctionExplanation: "L'adjectif 'rouges' prend un 's' car les pommes sont au pluriel." }
+                ],
+                doubtWords: [1, 2, 5],
+                dictionary: {
+                    1: { word: "petit", class: "adjectif", def: "De taille réduite, contraire de grand." },
+                    2: { word: "garçon", class: "nom masculin", def: "Enfant de sexe masculin." },
+                    5: { word: "pomme", class: "nom féminin", def: "Fruit rond et comestible du pommier." }
+                },
+                step5Question: "Qui est-ce qui mangent des pommes rouges ?",
+                step5Answer: "Les petits garçons",
+                step5VerbInfo: "Manger (Présent, 3e pers. du pluriel -> ils mangent)"
+            }
+        ];
+
+        const STEPS_INFO = {
+            1: { 
+                title: "Étape 1 : Majuscule et Point", 
+                instruction: "Touche la première lettre pour la Majuscule et la fin de la phrase pour le Point.",
+                reflection: "Observe bien cette phrase. Que manque-t-il au tout début et à la toute fin pour qu'elle soit bien construite ?"
+            },
+            2: { 
+                title: "Étape 2 : Encadrer les GN", 
+                instruction: "Sélectionne tous les mots composant les Groupes du Nom.",
+                reflection: "Quels sont les noms (personnes, animaux, objets) dans cette phrase ? Quels petits mots (déterminants, adjectifs) les accompagnent ?"
+            },
+            3: { 
+                title: "Étape 3 : Accords dans le GN", 
+                instruction: "Touche le NOM NOYAU pour tracer les lunettes. Touche les mots mal orthographiés pour les corriger.",
+                reflection: "Vérifions les accords ! Le nom noyau donne son genre (masculin/féminin) et son nombre (singulier/pluriel) à ses amis. Y a-t-il des oublis ?"
+            },
+            6: { 
+                title: "Étape 6 : Doutes Orthographiques", 
+                instruction: "Touche n'importe quel mot pour signaler un doute et ouvrir le dictionnaire !",
+                reflection: "Y a-t-il des mots compliqués dont on devrait vérifier l'orthographe dans le dictionnaire ? (Ex: lettres muettes, consonnes doubles, sons complexes)"
+            },
+            4: { 
+                title: "Étape 4 : Repérer le Verbe", 
+                instruction: "Souligne le verbe conjugué de la phrase en touchant le mot.",
+                reflection: "Quelle est l'action qui se passe dans cette phrase ? Trouve le verbe conjugué (rappel: on peut l'encadrer par 'ne...pas')."
+            },
+            5: { 
+                title: "Étape 5 : Accord Sujet - Verbe", 
+                instruction: "Touche le Groupe Sujet pour accorder le verbe !",
+                reflection: "Trouvons le patron du verbe ! Pose la question 'Qui est-ce qui...' devant le verbe pour trouver le Sujet."
+            }
+        };
+
+
+        // COMPOSANT MOT INTERACTIF
+        const Word = ({ word, currentStep, selectedStep1, selectedStep2, selectedStep4, selectedStep5, selectedStep6, correctedWords, onAction, reflectionMode }) => {
+            const flowOrder = [1, 2, 3, 4, 5, 6];
+            const isPassed = (step) => flowOrder.indexOf(currentStep) > flowOrder.indexOf(step);
+
+            const showCap = selectedStep1.includes('cap') || isPassed(1);
+            const showPunc = selectedStep1.includes('punc') || isPassed(1);
+
+            let forceCorrect = false;
+            // Étape 3 : Accords dans le GN (on ne corrige pas l'orthographe pure ici)
+            if (isPassed(3) && word.hasError && word.errorType === 'accord' && word.role !== 'verb') forceCorrect = true;
+            // Étape 6 : Erreurs d'orthographe pures
+            if (isPassed(6) && word.hasError && word.errorType === 'orthographe') forceCorrect = true;
+            // Étape 5 : Accords du verbe
+            if (currentStep === 5 && selectedStep5 && word.hasError && word.role === 'verb') forceCorrect = true;
+            if (isPassed(5) && word.hasError && word.role === 'verb') forceCorrect = true;
+
+            const isCorrected = correctedWords.includes(word.id) || forceCorrect;
+            const showCorrected = isCorrected && word.hasError;
+
+            const isStep2Selected = currentStep === 2 && selectedStep2.includes(word.id);
+            const isVerb = selectedStep4.includes(word.id) || (isPassed(4) && word.role === 'verb');
+            const isGNS = selectedStep5 && (word.gn === 1 || word.role === 'pronoun'); 
+            const isStar = selectedStep6.includes(word.id);
+            
+            // Détermine les lettres à afficher selon l'état de correction
+            let displayCap = word.text[0];
+            let displayBody = word.text.slice(1);
+
+            if (word.id === 0) {
+                if (showCap || showCorrected) {
+                    displayCap = word.fixed[0] || word.text[0].toUpperCase();
+                } else {
+                    displayCap = word.original[0];
+                }
+                displayBody = showCorrected ? word.fixed.slice(1) : word.original.slice(1);
+            } else {
+                if (showCorrected) {
+                    displayCap = word.fixed[0];
+                    displayBody = word.fixed.slice(1);
+                } else {
+                    displayCap = word.original[0];
+                    displayBody = word.original.slice(1);
+                }
+            }
+
+            return (
+                <span className={`relative inline-flex items-baseline mx-1.5 transition-all duration-300 word-item-${word.id} ${isStep2Selected ? 'bg-emerald-100 rounded-lg shadow-sm ring-4 ring-emerald-300' : ''}`} data-id={word.id}>
+                    
+                    {isStar && <span className="star-doubt bounce-slight">★</span>}
+
+                    {/* Zone cliquable globale pour les étapes 2, 3, 4, 6 */}
+                    <span 
+                        onClick={(e) => { 
+                            if (currentStep !== 1 && !reflectionMode) {
+                                e.stopPropagation();
+                                onAction(word, 'word'); 
+                            }
+                        }}
+                        className={`inline-flex items-baseline ${(currentStep > 1 && !reflectionMode) ? 'cursor-pointer hover:bg-slate-100 rounded' : ''} ${showCorrected ? 'corrected-text' : ''}`}
+                    >
+                        {/* Majuscule / Première lettre */}
+                        {word.id === 0 ? (
+                            <span 
+                                onClick={(e) => { 
+                                    if(currentStep === 1 && !reflectionMode) { e.stopPropagation(); onAction(word, 'cap'); } 
+                                }}
+                                className={`target-part ${currentStep === 1 && !reflectionMode && !showCap ? 'hitbox-interactive pulse-attention' : ''} ${showCap && !showCorrected ? 'selected-step1' : ''}`}
+                            >
+                                {displayCap}
+                            </span>
+                        ) : (
+                            <span className="target-part">{displayCap}</span>
+                        )}
+                        
+                        {/* Corps du mot */}
+                        <span className={`
+                            ${isVerb ? 'verb-underlined' : ''}
+                            ${isGNS ? 'gns-highlight' : ''}
+                        `}>
+                            {displayBody}
+                        </span>
+                    </span>
+
+                    {/* Ponctuation finale */}
+                    {word.isLast && (
+                        <span 
+                            onClick={(e) => { 
+                                if(currentStep === 1 && !reflectionMode) { e.stopPropagation(); onAction(word, 'punc'); }
+                            }}
+                            className={`target-part ml-1 text-4xl leading-[0] translate-y-1 ${currentStep === 1 && !reflectionMode && !showPunc ? 'hitbox-interactive pulse-attention px-3' : ''} ${showPunc ? 'selected-step1' : ''}`}
+                        >
+                            {showPunc ? (word.puncSymbol || ".") : (currentStep === 1 ? " " : "")}
+                        </span>
+                    )}
+                </span>
+            );
+        };
+
+        // BLOC GROUPE DU NOM (LUNETTES SVG)
+        const GNBlock = ({ words, currentStep, selectedStep1, selectedStep2, selectedStep3, selectedStep4, selectedStep5, selectedStep6, correctedWords, onAction, reflectionMode }) => {
+            const containerRef = useRef(null);
+            const [arcs, setArcs] = useState([]);
+            
+            const flowOrder = [1, 2, 3, 4, 5, 6];
+            const isPassed = (step) => flowOrder.indexOf(currentStep) > flowOrder.indexOf(step);
+
+            const isGNSelected = isPassed(2) || (currentStep === 2 && words.some(w => selectedStep2.includes(w.id)));
+            const nounWord = words.find(w => w.isNounNoyau || w.role === 'noun');
+            const nounId = nounWord ? nounWord.id : -1;
+            const isLunettesActive = selectedStep3.includes(nounId) || isPassed(3);
+
+            useLayoutEffect(() => {
+                const drawArcs = () => {
+                    if ((currentStep === 3 || isPassed(3)) && isLunettesActive && containerRef.current && nounWord) {
+                        const containerRect = containerRef.current.getBoundingClientRect();
+                        const nounEl = containerRef.current.querySelector(`.word-item-${nounWord.id}`);
+                        
+                        if (nounEl) {
+                            const nounRect = nounEl.getBoundingClientRect();
+                            const startX = nounRect.left - containerRect.left + (nounRect.width / 2) + 5;
+                            const startY = nounRect.top - containerRect.top;
+
+                            let newArcs = [];
+                            words.forEach(targetWord => {
+                                if (targetWord.id !== nounWord.id && (targetWord.role === 'det' || targetWord.role === 'adj')) {
+                                    const targetEl = containerRef.current.querySelector(`.word-item-${targetWord.id}`);
+                                    if (targetEl) {
+                                        const targetRect = targetEl.getBoundingClientRect();
+                                        const endX = targetRect.left - containerRect.left + (targetRect.width / 2);
+                                        const endY = targetRect.top - containerRect.top;
+
+                                        const distance = Math.abs(startX - endX);
+                                        const arcHeight = Math.min(Math.max(distance * 0.4, 25), 55);
+                                        const controlY = Math.min(startY, endY) - arcHeight;
+
+                                        newArcs.push(`M ${startX} ${startY} Q ${(startX + endX) / 2} ${controlY} ${endX} ${endY}`);
+                                    }
+                                }
+                            });
+                            setArcs(newArcs);
+                        }
+                    } else {
+                        setArcs([]);
+                    }
+                };
+
+                // Petit délai pour laisser le DOM s'ajuster
+                const timeoutId = setTimeout(drawArcs, 100);
+                window.addEventListener('resize', drawArcs);
+                return () => {
+                    clearTimeout(timeoutId);
+                    window.removeEventListener('resize', drawArcs);
+                };
+            }, [currentStep, isLunettesActive, words, nounWord]);
+
+            return (
+                <span ref={containerRef} className={`gn-container mx-1 px-1 rounded-xl transition-all duration-300 ${
+                    isGNSelected ? 'bg-slate-100/50' : ''
+                }`}>
+                    {/* Crochet Ouvrant virtuel */}
+                    {isGNSelected && <span className="text-emerald-500 font-black text-4xl mr-1 select-none opacity-80">[</span>}
+                    
+                    {(currentStep === 3 || isPassed(3)) && isLunettesActive && (
+                        <svg className="svg-overlay" style={{ overflow: 'visible' }}>
+                            {arcs.map((d, i) => (
+                                <path key={i} d={d} fill="none" stroke="#2563eb" strokeWidth="4" className="path-draw" strokeLinecap="round" />
+                            ))}
+                        </svg>
+                    )}
+
+                    {words.map(w => (
+                        <Word 
+                            key={w.id}
+                            word={w}
+                            currentStep={currentStep}
+                            selectedStep1={selectedStep1}
+                            selectedStep2={selectedStep2}
+                            selectedStep4={selectedStep4}
+                            selectedStep5={selectedStep5}
+                            selectedStep6={selectedStep6}
+                            correctedWords={correctedWords}
+                            onAction={onAction}
+                            reflectionMode={reflectionMode}
+                        />
+                    ))}
+
+                    {/* Crochet Fermant virtuel */}
+                    {isGNSelected && <span className="text-emerald-500 font-black text-4xl ml-1 select-none opacity-80">]</span>}
+                </span>
+            );
+        };
+
+        // ONGLET ÉDITEUR
+        const EditorTab = ({ onStartAnalysis }) => {
+            const [customText, setCustomText] = useState("");
+            const [isAnalyzing, setIsAnalyzing] = useState(false);
+            const [errorMsg, setErrorMsg] = useState("");
+            const isMounted = useRef(true);
+
+            useEffect(() => {
+                return () => {
+                    isMounted.current = false;
+                };
+            }, []);
+
+            const handleLoadPreset = (index) => {
+                onStartAnalysis(PRESET_SENTENCES[index]);
+            };
+
+            const handleCustomSubmit = async (e) => {
+                e.preventDefault();
+                if (!customText.trim()) return;
+                
+                setIsAnalyzing(true);
+                setErrorMsg("");
+
+                try {
+                    const apiKey = ""; // L'API Key sera injectée par l'environnement Canvas
+                    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+
+                    const prompt = `Tu es un professeur expert en français. Analyse la phrase suivante écrite par un élève, décode-la (même si elle contient beaucoup d'erreurs phonétiques) et structure la correction pour un outil interactif au TNI.
+Phrase de l'élève : "${customText}"
+Exigences strictes :
+- Sépare la phrase en mots individuels.
+- Le premier mot doit avoir isFirst: true. Le dernier mot doit avoir isLast: true.
+- Pour chaque mot, donne 'original' (ce que l'élève a écrit exactement) et 'fixed' (le mot bien orthographié et accordé).
+- Assigne un rôle court parmi : det, adj, noun, verb, prep, pronoun, adv, conj.
+- Assigne un numéro de GN (1, 2, 3...) pour les mots d'un même Groupe Nominal, ou 0 s'il n'est dans aucun GN.
+- isNounNoyau : true si le mot est le nom noyau du GN.
+- hasError : true si l'élève a fait une faute sur ce mot (orthographe ou grammaire).
+- Assigne errorType : 'accord' (pour les fautes de conjugaison ou d'accord en genre/nombre) ou 'orthographe' (pour les fautes lexicales ou phonétiques ex: ru -> rue, avaic -> avec).
+- correctionExplanation : explication claire et pédagogique de la correction si hasError est true, courte.
+- step5Question : La question pour trouver le sujet (ex: "Qui est-ce qui [verbe] ?").
+- step5Answer : Le sujet complet.
+- step5VerbInfo : L'explication de l'accord du verbe avec son sujet.`;
+
+                    const payload = {
+                        contents: [{ parts: [{ text: prompt }] }],
+                        generationConfig: {
+                            responseMimeType: "application/json",
+                            responseSchema: {
+                                type: "OBJECT",
+                                properties: {
+                                    words: {
+                                        type: "ARRAY",
+                                        items: {
+                                            type: "OBJECT",
+                                            properties: {
+                                                original: { type: "STRING" },
+                                                fixed: { type: "STRING" },
+                                                role: { type: "STRING" },
+                                                gn: { type: "NUMBER" },
+                                                isNounNoyau: { type: "BOOLEAN" },
+                                                hasError: { type: "BOOLEAN" },
+                                                errorType: { type: "STRING" },
+                                                correctionExplanation: { type: "STRING" },
+                                                isFirst: { type: "BOOLEAN" },
+                                                isLast: { type: "BOOLEAN" }
+                                            }
+                                        }
+                                    },
+                                    step5Question: { type: "STRING" },
+                                    step5Answer: { type: "STRING" },
+                                    step5VerbInfo: { type: "STRING" }
+                                }
+                            }
+                        }
+                    };
+
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.candidates && result.candidates.length > 0) {
+                        const jsonText = result.candidates[0].content.parts[0].text;
+                        const parsedData = JSON.parse(jsonText);
+                        
+                        const processedWords = parsedData.words.map((w, idx) => {
+                            const isFirstWord = w.isFirst || idx === 0;
+                            const isLastWord = w.isLast || idx === parsedData.words.length - 1;
+                            const isCapMissed = isFirstWord && w.original.charAt(0) !== w.original.charAt(0).toUpperCase();
+                            
+                            return {
+                                id: idx,
+                                text: w.original,
+                                original: w.original,
+                                fixed: isFirstWord ? w.fixed.charAt(0).toUpperCase() + w.fixed.slice(1) : w.fixed,
+                                role: w.role,
+                                gn: w.gn === 0 ? null : w.gn,
+                                isNounNoyau: w.isNounNoyau,
+                                hasError: w.hasError || isCapMissed,
+                                errorType: w.errorType || (w.hasError ? (w.role === 'verb' ? 'accord' : 'orthographe') : null),
+                                isCapError: isCapMissed,
+                                puncSymbol: isLastWord ? "." : null,
+                                isLast: isLastWord,
+                                isPuncError: isLastWord, // On suppose que l'élève oublie souvent le point pour l'exercice
+                                correctionExplanation: w.correctionExplanation || "Correction apportée."
+                            };
+                        });
+
+                        const newSentenceData = {
+                            title: "Phrase décodée par l'IA",
+                            studentText: customText,
+                            words: processedWords,
+                            doubtWords: [], 
+                            dictionary: {}, // Peut être généré par l'IA dans une future amélioration
+                            step5Question: parsedData.step5Question || "Qui est-ce qui fait l'action ?",
+                            step5Answer: parsedData.step5Answer || "Le sujet",
+                            step5VerbInfo: parsedData.step5VerbInfo || "Le verbe s'accorde avec le sujet."
+                        };
+
+                        onStartAnalysis(newSentenceData);
+                    } else {
+                        if (isMounted.current) setErrorMsg("Impossible d'analyser la phrase. Réessayez.");
+                    }
+                } catch (err) {
+                    console.error(err);
+                    if (isMounted.current) setErrorMsg("Erreur de connexion à l'IA d'analyse.");
+                } finally {
+                    if (isMounted.current) setIsAnalyzing(false);
+                }
+            };
+
+            return (
+                <div className="w-full h-full overflow-y-auto p-4 md:p-8 bg-slate-50 pb-24">
+                    <div className="max-w-4xl mx-auto fade-in space-y-8">
+                        <div className="bg-white rounded-3xl p-6 lg:p-10 shadow-xl border border-indigo-100 text-center">
+                            <div className="inline-flex p-3 bg-amber-100 text-amber-800 rounded-2xl mb-4 font-black">
+                                <Icon name="pen-tool" className="w-8 h-8 mr-2 inline-block" /> 
+                                Analyseur de Phrase Interactif
+                            </div>
+                            <h2 className="text-3xl lg:text-4xl font-black text-indigo-900 mb-4 tracking-tight">
+                                Saisissez la phrase à analyser
+                            </h2>
+                            <p className="text-lg text-gray-600 mb-8 font-medium">
+                                Écrivez la phrase de l'élève (ex: les ami aim jouer a la balle...). L'IA la décodera et préparera l'exercice.
+                            </p>
+
+                            <form onSubmit={handleCustomSubmit} className="mb-10 text-left bg-slate-50 p-6 rounded-2xl border-2 border-indigo-100 shadow-inner">
+                                <label className="block text-indigo-950 font-bold text-lg mb-2">
+                                    ✍️ Phrase de l'élève :
+                                </label>
+                                <input 
+                                    type="text"
+                                    value={customText}
+                                    onChange={(e) => setCustomText(e.target.value)}
+                                    placeholder="Ex: les ami aim jouer a la balle avaic les chat dan la ru"
+                                    className="w-full text-xl p-4 rounded-xl border-2 border-indigo-300 focus:border-indigo-600 focus:outline-none bg-white font-medium shadow-sm mb-4"
+                                    disabled={isAnalyzing}
+                                />
+                                {errorMsg && <p className="text-red-600 font-bold mb-4">{errorMsg}</p>}
+                                <button 
+                                    type="submit"
+                                    disabled={!customText.trim() || isAnalyzing}
+                                    className={`w-full py-4 rounded-xl text-xl font-black transition flex items-center justify-center gap-3 ${
+                                        (customText.trim() && !isAnalyzing) ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg active:scale-95' : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                                    }`}
+                                >
+                                    {isAnalyzing ? (
+                                        <span className="flex items-center gap-2">
+                                            <Icon name="sparkles" className="animate-spin" /> Décodage par l'IA en cours...
+                                        </span>
+                                    ) : (
+                                        <span className="flex items-center gap-2">Lancer l'analyse intelligente <Icon name="arrow-right" /></span>
+                                    )}
+                                </button>
+                            </form>
+
+                            <div className="text-left border-t-2 border-gray-100 pt-6">
+                                <h3 className="font-extrabold text-xl text-indigo-900 mb-4 flex items-center gap-2">
+                                    <Icon name="sparkles" className="text-amber-500" /> Ou choisissez un exemple rapide :
+                                </h3>
+                                <div className="grid grid-cols-1 gap-4">
+                                    {PRESET_SENTENCES.map((preset, idx) => (
+                                        <div 
+                                            key={idx}
+                                            onClick={() => handleLoadPreset(idx)}
+                                            className="p-5 rounded-2xl border-2 border-indigo-100 hover:border-indigo-500 hover:bg-indigo-50 cursor-pointer transition flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white shadow-sm"
+                                        >
+                                            <div>
+                                                <h4 className="font-extrabold text-lg text-indigo-900">{preset.title}</h4>
+                                                <p className="text-xl font-bold text-red-600 font-mono mt-1">« {preset.studentText} »</p>
+                                            </div>
+                                            <button className="bg-indigo-100 text-indigo-800 hover:bg-indigo-600 hover:text-white px-5 py-2.5 rounded-xl font-extrabold transition shrink-0">
+                                                Lancer
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // SIMULATEUR D'ANALYSE
+        const AnalyzerTab = ({ sentenceData, onBackToEditor }) => {
+            const [currentStep, setCurrentStep] = useState(1);
+            const [reflectionMode, setReflectionMode] = useState(true);
+            const [isFinished, setIsFinished] = useState(false);
+
+            // Sélections
+            const [selectedStep1, setSelectedStep1] = useState([]);
+            const [selectedStep2, setSelectedStep2] = useState([]);
+            const [selectedStep3, setSelectedStep3] = useState([]);
+            const [selectedStep4, setSelectedStep4] = useState([]);
+            const [selectedStep5, setSelectedStep5] = useState(false);
+            const [selectedStep6, setSelectedStep6] = useState([]);
+
+            const [correctedWords, setCorrectedWords] = useState([]);
+            const [feedback, setFeedback] = useState({ status: 'idle', message: '' });
+            
+            // Modals
+            const [showDictionary, setShowDictionary] = useState(false);
+            const [currentDictWord, setCurrentDictWord] = useState(null);
+            const [showVerbInfo, setShowVerbInfo] = useState(false);
+            const [explanationModal, setExplanationModal] = useState(null); // { title: '', text: '' }
+
+            const { words } = sentenceData;
+
+            const handleWordAction = (word, action) => {
+                if (reflectionMode) return; // Sécurité : pas de clic pendant la réflexion
+
+                // Étape 1 : Majuscule & Ponctuation
+                if (currentStep === 1) {
+                    if (action === 'cap' && word.id === 0) {
+                        if (!selectedStep1.includes('cap')) {
+                            setSelectedStep1(prev => [...prev, 'cap']);
+                            setFeedback({ status: 'correct', message: "Excellent ! On a ajouté la majuscule." });
+                            setExplanationModal({ title: "Règle de la Majuscule", text: "Une phrase commence toujours par une lettre majuscule !" });
+                        }
+                    }
+                    if (action === 'punc' && word.isLast) {
+                        if (!selectedStep1.includes('punc')) {
+                            setSelectedStep1(prev => [...prev, 'punc']);
+                            setFeedback({ status: 'correct', message: "Bravo ! Le point final est placé." });
+                            setExplanationModal({ title: "Ponctuation", text: "Une phrase se termine toujours par un point (., !, ?)." });
+                        }
+                    }
+                    return;
+                }
+
+                // Étape 2 : GN
+                if (currentStep === 2 && action === 'word') {
+                    if (word.gn !== null) {
+                        setSelectedStep2(prev => 
+                            prev.includes(word.id) ? prev.filter(id => id !== word.id) : [...prev, word.id]
+                        );
+                        setFeedback({ status: 'correct', message: "Mot du Groupe du Nom sélectionné." });
+                    }
+                    return;
+                }
+
+                // Étape 3 : Accords Nom (Lunettes)
+                if (currentStep === 3 && action === 'word') {
+                    if (word.isNounNoyau || word.role === 'noun') {
+                        if (!selectedStep3.includes(word.id)) {
+                            setSelectedStep3(prev => [...prev, word.id]);
+                            setFeedback({ status: 'correct', message: `Lunettes tracées depuis le nom noyau « ${word.fixed} » !` });
+                            if (word.hasError && word.errorType === 'accord' && !correctedWords.includes(word.id)) {
+                                setCorrectedWords(prev => [...prev, word.id]);
+                                setTimeout(() => setExplanationModal({ title: "Correction de l'accord", text: word.correctionExplanation || "Le nom noyau devait être corrigé en nombre/genre." }), 300);
+                            }
+                        }
+                    } else if (word.hasError && word.errorType === 'accord' && (word.role === 'adj' || word.role === 'det' || word.role === 'prep')) {
+                        if (!correctedWords.includes(word.id)) {
+                            setCorrectedWords(prev => [...prev, word.id]);
+                            setFeedback({ status: 'correct', message: "Accord corrigé !" });
+                            setTimeout(() => setExplanationModal({ title: "Accord", text: word.correctionExplanation || "Ce mot s'accorde avec le nom noyau." }), 300);
+                        }
+                    }
+                    return;
+                }
+
+                // Étape 6 : Doutes
+                if (currentStep === 6 && action === 'word') {
+                    if (!selectedStep6.includes(word.id)) {
+                        setSelectedStep6(prev => [...prev, word.id]);
+                        
+                        if (word.hasError && word.errorType === 'orthographe' && !correctedWords.includes(word.id)) {
+                            setCorrectedWords(prev => [...prev, word.id]);
+                            setFeedback({ status: 'correct', message: "Erreur d'orthographe corrigée !" });
+                            setTimeout(() => setExplanationModal({ title: "Orthographe", text: word.correctionExplanation || "Ce mot s'écrit de cette manière." }), 300);
+                        } else if (sentenceData.dictionary && sentenceData.dictionary[word.id]) {
+                            setCurrentDictWord(word.id);
+                            setTimeout(() => setShowDictionary(true), 200);
+                        } else {
+                             setFeedback({ status: 'correct', message: "Bon réflexe ! Ce mot ne contient pas de piège majeur d'orthographe." });
+                        }
+                    }
+                    return;
+                }
+
+                // Étape 4 : Verbe
+                if (currentStep === 4 && action === 'word') {
+                    if (word.role === 'verb') {
+                        if (!selectedStep4.includes(word.id)) {
+                            setSelectedStep4(prev => [...prev, word.id]);
+                            setFeedback({ status: 'correct', message: `Verbe conjugué souligné en rouge !` });
+                        }
+                    }
+                    return;
+                }
+
+                // Étape 5 : Sujet
+                if (currentStep === 5 && action === 'word') {
+                    if (word.gn === 1 || word.role === 'pronoun') {
+                        setSelectedStep5(true);
+                        const verbWord = words.find(w => w.role === 'verb');
+                        if (verbWord && verbWord.hasError && !correctedWords.includes(verbWord.id)) {
+                            setCorrectedWords(prev => [...prev, verbWord.id]);
+                            // Affiche d'abord l'explication spécifique du verbe
+                            setTimeout(() => setExplanationModal({ title: "Accord Sujet-Verbe", text: verbWord.correctionExplanation || "Le verbe s'accorde avec le sujet." }), 300);
+                        }
+                        setFeedback({ status: 'correct', message: sentenceData.step5Answer || "GNS trouvé !" });
+                        setTimeout(() => setShowVerbInfo(true), 2000); // Repousse l'info globale du verbe
+                    }
+                    return;
+                }
+            };
+
+            const handleNextStep = () => {
+                const flow = [1, 2, 3, 4, 5, 6];
+                const currentIndex = flow.indexOf(currentStep);
+                
+                // AUTO-CORRECTION / AUTO-COMPLÉTION : Valide et corrige obligatoirement l'étape qu'on quitte
+                if (currentStep === 1) {
+                    // Force l'affichage de la majuscule et du point
+                    setSelectedStep1(['cap', 'punc']);
+                } 
+                else if (currentStep === 2) {
+                    // Force la sélection de tous les mots faisant partie d'un GN
+                    const gnWordIds = words.filter(w => w.gn !== null).map(w => w.id);
+                    setSelectedStep2(gnWordIds);
+                } 
+                else if (currentStep === 3) {
+                    // Force le tracé des lunettes
+                    const nounIds = words.filter(w => w.isNounNoyau || w.role === 'noun').map(w => w.id);
+                    setSelectedStep3(prev => [...new Set([...prev, ...nounIds])]);
+                    // Force la correction de tous les mots ayant des erreurs d'accord uniquement
+                    const wordsToFix = words.filter(w => w.hasError && w.errorType === 'accord' && w.role !== 'verb').map(w => w.id);
+                    setCorrectedWords(prev => [...new Set([...prev, ...wordsToFix])]);
+                }
+                else if (currentStep === 6) {
+                    // Force la correction des fautes d'orthographe à la fin de l'étape 6
+                    const orthoToFix = words.filter(w => w.hasError && w.errorType === 'orthographe').map(w => w.id);
+                    setCorrectedWords(prev => [...new Set([...prev, ...orthoToFix])]);
+                }
+                else if (currentStep === 4) {
+                    // Force le soulignement du verbe
+                    const verbIds = words.filter(w => w.role === 'verb').map(w => w.id);
+                    setSelectedStep4(verbIds);
+                } 
+                else if (currentStep === 5) {
+                    // Force l'identification du sujet et la correction du verbe
+                    setSelectedStep5(true);
+                    const verbIds = words.filter(w => w.hasError && w.role === 'verb').map(w => w.id);
+                    setCorrectedWords(prev => [...new Set([...prev, ...verbIds])]);
+                }
+
+                if (currentIndex < flow.length - 1) {
+                    setCurrentStep(flow[currentIndex + 1]);
+                    setReflectionMode(true); // Active la réflexion pour la nouvelle étape
+                    setFeedback({ status: 'idle', message: '' });
+                } else {
+                    setIsFinished(true);
+                    setFeedback({ status: 'correct', message: "Analyse complète et terminée ! Bravo !" });
+                }
+            };
+
+            const renderSentence = () => {
+                const elements = [];
+                let i = 0;
+
+                while (i < words.length) {
+                    const w = words[i];
+                    if (w.gn !== null) {
+                        const gnWords = words.filter(word => word.gn === w.gn);
+                        elements.push(
+                            <GNBlock 
+                                key={`gn-${w.gn}`} 
+                                words={gnWords} 
+                                currentStep={currentStep}
+                                selectedStep1={selectedStep1}
+                                selectedStep2={selectedStep2}
+                                selectedStep3={selectedStep3}
+                                selectedStep4={selectedStep4}
+                                selectedStep5={selectedStep5}
+                                selectedStep6={selectedStep6}
+                                correctedWords={correctedWords}
+                                onAction={handleWordAction}
+                                reflectionMode={reflectionMode}
+                            />
+                        );
+                        i += gnWords.length;
+                    } else {
+                        elements.push(
+                            <Word 
+                                key={`word-${w.id}`}
+                                word={w} 
+                                currentStep={currentStep} 
+                                selectedStep1={selectedStep1} 
+                                selectedStep2={selectedStep2} 
+                                selectedStep4={selectedStep4} 
+                                selectedStep5={selectedStep5} 
+                                selectedStep6={selectedStep6}
+                                correctedWords={correctedWords}
+                                onAction={handleWordAction}
+                                reflectionMode={reflectionMode}
+                            />
+                        );
+                        i++;
+                    }
+                }
+                return elements;
+            };
+
+            return (
+                <div className="flex-1 flex flex-col w-full h-full bg-slate-50 relative">
+                    
+                    {/* MODAL DE RÉFLEXION (OBLIGATOIRE) */}
+                    {reflectionMode && (
+                        <div className="absolute inset-0 z-40 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 fade-in">
+                            <div className="bg-white rounded-3xl p-8 max-w-2xl w-full shadow-2xl border-4 border-amber-300 text-center slide-up">
+                                <div className="inline-flex items-center justify-center p-4 bg-amber-100 text-amber-600 rounded-full mb-6">
+                                    <Icon name="lightbulb" className="w-12 h-12" />
+                                </div>
+                                <h3 className="text-3xl font-black text-slate-800 mb-4">Minute de réflexion</h3>
+                                <p className="text-xl md:text-2xl text-slate-600 font-medium leading-relaxed mb-8">
+                                    {STEPS_INFO[currentStep].reflection}
+                                </p>
+                                <button 
+                                    onClick={() => setReflectionMode(false)}
+                                    className="bg-amber-500 hover:bg-amber-600 text-white font-black py-4 px-10 rounded-2xl text-xl shadow-lg transition transform hover:scale-105"
+                                >
+                                    C'est compris, on corrige !
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Header Nav */}
+                    <div className="bg-white px-4 py-3 shadow-sm z-10 flex flex-col sm:flex-row items-center justify-between border-b-2 border-indigo-100 shrink-0 gap-2">
+                        <button onClick={onBackToEditor} className="text-indigo-700 hover:text-indigo-900 font-extrabold flex items-center gap-2 bg-indigo-50 px-4 py-2 rounded-xl border border-indigo-100">
+                            <Icon name="arrow-left" /> Changer
+                        </button>
+                        
+                        <div className="flex gap-2 overflow-x-auto max-w-full pb-1 px-2 no-scrollbar">
+                            {[1, 2, 3, 4, 5, 6].map((step) => (
+                                <div 
+                                    key={step} 
+                                    className={`flex items-center justify-center px-3 py-2 rounded-xl font-extrabold text-sm shadow-sm transition-all shrink-0 ${
+                                        currentStep === step ? 'bg-indigo-600 text-white scale-105 ring-4 ring-indigo-200' : 
+                                        'bg-gray-100 text-gray-600'
+                                    }`}
+                                >
+                                    Étape {step}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Zone principale Phrase */}
+                    <div className="flex-1 overflow-y-auto p-4 sm:p-8 flex flex-col items-center justify-start pb-24">
+                        <div className="w-full max-w-5xl mt-4">
+                            <div className="text-center mb-8">
+                                <span className="inline-block bg-indigo-100 text-indigo-900 font-black px-4 py-1.5 rounded-full text-sm uppercase tracking-wider mb-2 shadow-sm">
+                                    {STEPS_INFO[currentStep].title}
+                                </span>
+                                <p className="text-xl sm:text-2xl text-slate-700 font-medium bg-white/80 py-2 px-6 rounded-2xl inline-block shadow-sm">
+                                    {STEPS_INFO[currentStep].instruction}
+                                </p>
+                            </div>
+
+                            <div className="bg-white rounded-[2.5rem] shadow-2xl p-8 sm:p-16 min-h-[300px] border-4 border-indigo-50 flex flex-col justify-center items-center relative z-0">
+                                <div className="text-4xl sm:text-5xl md:text-6xl lg:text-[4.5rem] leading-[5rem] sm:leading-[7rem] md:leading-[8rem] text-center font-medium select-none w-full relative tracking-tight text-slate-800">
+                                    {renderSentence()}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Barre d'action inférieure */}
+                    <div className="fixed bottom-0 left-0 w-full bg-white border-t-2 border-gray-200 shadow-[0_-10px_40px_rgba(0,0,0,0.08)] p-4 sm:p-6 z-20">
+                        <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+                            <div className={`flex-1 w-full rounded-2xl p-4 flex items-center gap-4 transition-all border-2 ${
+                                feedback.status === 'correct' ? 'bg-emerald-50 text-emerald-900 border-emerald-300' : 'bg-indigo-50 text-indigo-900 border-indigo-100'
+                            }`}>
+                                <div className="flex-1">
+                                    <p className="text-lg sm:text-xl font-bold leading-tight">
+                                        {feedback.message || "Interagis avec la phrase pour appliquer la correction." }
+                                    </p>
+                                </div>
+                            </div>
+
+                            {isFinished ? (
+                                <button 
+                                    onClick={onBackToEditor} 
+                                    className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white font-black py-4 px-8 rounded-2xl shadow-lg transition flex items-center justify-center gap-3 text-xl shrink-0 active:scale-95"
+                                >
+                                    Analyser une autre phrase <Icon name="arrow-right" />
+                                </button>
+                            ) : (
+                                <button 
+                                    onClick={handleNextStep} 
+                                    disabled={reflectionMode} // Empêche de passer si on n'a pas lu la consigne
+                                    className={`w-full sm:w-auto font-black py-4 px-8 rounded-2xl shadow-lg transition flex items-center justify-center gap-3 text-xl shrink-0 ${
+                                        reflectionMode ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 text-white active:scale-95'
+                                    }`}
+                                >
+                                    {currentStep === 6 ? "Terminer" : "Étape suivante"} <Icon name="arrow-right" />
+                                </button>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* FENÊTRE MODALE D'EXPLICATION (Nouveau) */}
+                    {explanationModal && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4 fade-in">
+                            <div className="bg-white rounded-3xl p-6 md:p-8 max-w-lg w-full shadow-2xl border-4 border-emerald-400 slide-up text-center">
+                                <div className="inline-flex p-4 bg-emerald-100 text-emerald-600 rounded-full mb-4">
+                                    <Icon name="check-circle" className="w-12 h-12" />
+                                </div>
+                                <h3 className="text-3xl font-black text-emerald-800 mb-6">{explanationModal.title}</h3>
+                                <p className="text-2xl text-gray-800 font-medium bg-emerald-50 p-6 rounded-2xl mb-8 border border-emerald-100 leading-snug">
+                                    {explanationModal.text}
+                                </p>
+                                <button onClick={() => setExplanationModal(null)} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black py-4 rounded-2xl text-xl shadow-lg transition active:scale-95">
+                                    J'ai compris !
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Modals Extras (Dico, Verbe) */}
+                    {showDictionary && currentDictWord !== null && sentenceData.dictionary && sentenceData.dictionary[currentDictWord] && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 fade-in">
+                            <div className="bg-white rounded-3xl p-6 md:p-8 max-w-lg w-full shadow-2xl border-4 border-purple-200 slide-up">
+                                <div className="flex items-center gap-3 mb-6 border-b-2 border-purple-100 pb-4">
+                                    <div className="p-3 bg-purple-100 text-purple-700 rounded-2xl"><Icon name="book-open" className="w-8 h-8" /></div>
+                                    <div>
+                                        <h3 className="text-3xl font-black text-purple-900">{sentenceData.dictionary[currentDictWord].word}</h3>
+                                    </div>
+                                </div>
+                                <div className="space-y-4 text-gray-700 text-lg mb-8">
+                                    <div className="flex gap-2"><span className="font-bold">Nature :</span><span className="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-sm font-bold">{sentenceData.dictionary[currentDictWord].class}</span></div>
+                                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                                        <p className="font-medium">{sentenceData.dictionary[currentDictWord].def}</p>
+                                    </div>
+                                </div>
+                                <button onClick={() => setShowDictionary(false)} className="w-full bg-purple-600 hover:bg-purple-700 text-white font-black py-4 rounded-2xl text-xl shadow-lg">
+                                    Fermer le dictionnaire
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {showVerbInfo && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 fade-in">
+                            <div className="bg-white rounded-3xl p-6 md:p-8 max-w-lg w-full shadow-2xl border-4 border-red-200 slide-up text-center">
+                                <h3 className="text-3xl font-black text-red-700 mb-6">Explication de l'accord</h3>
+                                <p className="text-2xl text-gray-800 font-bold bg-red-50 p-6 rounded-2xl mb-8 border border-red-100">
+                                    {sentenceData.step5VerbInfo || "Le verbe s'accorde avec le sujet."}
+                                </p>
+                                <button onClick={() => setShowVerbInfo(false)} className="w-full bg-red-600 hover:bg-red-700 text-white font-black py-4 rounded-2xl text-xl shadow-lg">
+                                    C'est noté !
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [view, setView] = useState('editor');
+            const [activeSentence, setActiveSentence] = useState(null);
+
+            const handleStartAnalysis = (sentenceData) => {
+                setActiveSentence(sentenceData);
+                setView('analyzer');
+            };
+
+            return (
+                <div className="h-full flex flex-col w-full relative">
+                    <header className="bg-indigo-900 text-white py-3 px-6 shadow-md flex justify-between items-center shrink-0 z-30">
+                        <div className="flex items-center gap-3">
+                            <div className="bg-amber-400 text-indigo-950 p-2 rounded-xl font-black text-2xl">CC</div>
+                            <h1 className="text-2xl font-black tracking-wide">
+                                Analyseur de Phrases <span className="text-amber-400 font-medium text-lg ml-2 hidden sm:inline">| Interactif</span>
+                            </h1>
+                        </div>
+                    </header>
+                    <main className="flex-1 flex flex-col overflow-hidden relative w-full">
+                        {view === 'editor' && <EditorTab onStartAnalysis={handleStartAnalysis} />}
+                        {view === 'analyzer' && <AnalyzerTab sentenceData={activeSentence} onBackToEditor={() => setView('editor')} />}
+                    </main>
+                </div>
+            );
+        };
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
